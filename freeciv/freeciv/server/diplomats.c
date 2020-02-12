@@ -65,7 +65,8 @@ static bool diplomat_infiltrate_tile(struct player *pplayer,
                                      const struct action *paction,
                                      struct unit *pdiplomat,
                                      struct unit *pvictim,
-                                     struct tile *ptile);
+                                     struct tile *ptile,
+                                     struct player **defender_owner);
 static bool diplomat_was_caught(struct player *act_player,
                                 struct unit *act_unit,
                                 struct city *tgt_city,
@@ -121,7 +122,7 @@ bool spy_poison(struct player *pplayer, struct unit *pdiplomat,
 
   /* Check if the Diplomat/Spy succeeds against defending Diplomats/Spies. */
   if (!diplomat_infiltrate_tile(pplayer, cplayer, paction,
-                                pdiplomat, NULL, ctile)) {
+                                pdiplomat, NULL, ctile, NULL)) {
     return FALSE;
   }
 
@@ -239,7 +240,7 @@ bool spy_spread_plague(struct player *act_player, struct unit *act_unit,
   /* Battle all units capable of diplomatic defense. */
   if (!diplomat_infiltrate_tile(act_player, tgt_player,
                                 paction,
-                                act_unit, NULL, tgt_tile)) {
+                                act_unit, NULL, tgt_tile, NULL)) {
     return FALSE;
   }
 
@@ -385,7 +386,7 @@ bool diplomat_investigate(struct player *pplayer, struct unit *pdiplomat,
 
       // Diplomatic combat now ensues, if enemy diplomats are present:
       if (!diplomat_infiltrate_tile(pplayer, cplayer, paction,
-                                    pdiplomat, NULL, city_tile(pcity))) {
+                                    pdiplomat, NULL, city_tile(pcity), NULL)) {
         return FALSE;
       }
     }
@@ -624,7 +625,8 @@ bool spy_sabotage_unit(struct player *pplayer, struct unit *pdiplomat,
   if (!diplomat_infiltrate_tile(pplayer, uplayer,
                                 paction,
                                 pdiplomat, pvictim,
-                                unit_tile(pvictim))) {
+                                unit_tile(pvictim),
+                                NULL)) {
     return FALSE;
   }
 
@@ -754,7 +756,8 @@ bool diplomat_bribe(struct player *pplayer, struct unit *pdiplomat,
   if (!diplomat_infiltrate_tile(pplayer, uplayer,
                                 paction,
                                 pdiplomat, pvictim,
-                                pvictim->tile)) {
+                                pvictim->tile,
+                                NULL)) {
     return FALSE;
   }
 
@@ -885,7 +888,7 @@ bool spy_attack(struct player *act_player, struct unit *act_unit,
   /* Do the diplomatic battle against a diplomatic defender. */
   diplomat_infiltrate_tile(act_player, NULL,
                            paction,
-                           act_unit, NULL, tgt_tile);
+                           act_unit, NULL, tgt_tile, NULL);
                            //, &tgt_player);
 
   /* Sanity check: the defender had an owner. */
@@ -1024,7 +1027,8 @@ bool diplomat_get_tech(struct player *pplayer, struct unit *pdiplomat,
   if (!diplomat_infiltrate_tile(pplayer, cplayer,
                                 paction,
                                 pdiplomat, NULL,
-                                pcity->tile)) {
+                                pcity->tile,
+                                NULL)) {
     return FALSE;
   }
 
@@ -1243,7 +1247,8 @@ bool diplomat_incite(struct player *pplayer, struct unit *pdiplomat,
   if (!diplomat_infiltrate_tile(pplayer, cplayer,
                                 paction,
                                 pdiplomat, NULL,
-                                pcity->tile)) {
+                                pcity->tile,
+                                NULL)) {
     diplomat_may_lose_gold(pplayer, cplayer, revolt_cost / 2 );
     return FALSE;
   }
@@ -1369,7 +1374,8 @@ bool diplomat_sabotage(struct player *pplayer, struct unit *pdiplomat,
   if (!diplomat_infiltrate_tile(pplayer, cplayer,
                                 paction,
                                 pdiplomat, NULL,
-                                pcity->tile)) {
+                                pcity->tile,
+                                NULL)) {
     return FALSE;
   }
 
@@ -1682,7 +1688,8 @@ bool spy_steal_gold(struct player *act_player, struct unit *act_unit,
   /* Battle all units capable of diplomatic defence. */
   if (!diplomat_infiltrate_tile(act_player, tgt_player,
                                 paction,
-                                act_unit, NULL, tgt_tile)) {
+                                act_unit, NULL, tgt_tile,
+                                NULL)) {
     return FALSE;
   }
 
@@ -1817,7 +1824,8 @@ bool spy_steal_some_maps(struct player *act_player, struct unit *act_unit,
   /* Battle all units capable of diplomatic defence. */
   if (!diplomat_infiltrate_tile(act_player, tgt_player,
                                 paction,
-                                act_unit, NULL, tgt_tile)) {
+                                act_unit, NULL, tgt_tile,
+                                NULL)) {
     return FALSE;
   }
 
@@ -1920,7 +1928,8 @@ bool spy_nuke_city(struct player *act_player, struct unit *act_unit,
   /* Battle all units capable of diplomatic defense. */
   if (!diplomat_infiltrate_tile(act_player, tgt_player,
                                 paction,
-                                act_unit, NULL, tgt_tile)) {
+                                act_unit, NULL, tgt_tile,
+                                NULL)) {
     return FALSE;
   }
 
@@ -2119,14 +2128,19 @@ static bool diplomat_success_vs_defender(struct unit *pattacker,
   - Return TRUE if the infiltrator succeeds.
 
   'pplayer' is the player who tries to do a spy/diplomat action on 'ptile'
-  with the unit 'pdiplomat' against 'cplayer'.
+  with the unit 'pdiplomat' against 'cplayer'. If 'cplayer' is NULL the
+  owner of the chosen defender, if a defender can be chosen, gets its
+  role.
+  'defender_owner' is, if non NULL, set to the owner of the unit that
+  defended.
 ****************************************************************************/
 static bool diplomat_infiltrate_tile(struct player *pplayer,
                                      struct player *cplayer,
                                      const struct action *paction,
                                      struct unit *pdiplomat,
                                      struct unit *pvictim,
-                                     struct tile *ptile)
+                                     struct tile *ptile,
+                                     struct player **defender_owner)
 {
   char link_city[MAX_LEN_LINK] = "";
   char link_diplomat[MAX_LEN_LINK];
@@ -2206,6 +2220,11 @@ static bool diplomat_infiltrate_tile(struct player *pplayer,
         if (strcmp(utype_name_translation(unit_type_get(punit)), "Siege Ram")==0) {
           continue; // skip to next unit in the list: Siege Rams don't engage in diplomatic combat.
         }
+      }
+
+      if (defender_owner != NULL) {
+        /* Some action performers may want to know defender player. */
+        *defender_owner = uplayer;
       }
 
       if (diplomat_success_vs_defender(pdiplomat, punit, ptile)) {
